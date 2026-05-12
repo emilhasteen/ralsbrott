@@ -10,10 +10,9 @@ export function parseIntent(input) {
     return { intent: "help" };
   }
 
-  const idMatch = text.match(/^(?:inv[-\s]?)?0*(\d+)$/i);
+  const idMatch = text.match(/^#?(\d+)$/);
   if (idMatch) {
-    const padded = idMatch[1].padStart(3, "0");
-    return { intent: "aggregate", invoiceId: `INV-${padded}` };
+    return { intent: "aggregate", invoiceId: idMatch[1] };
   }
 
   return { intent: "unknown", raw: text };

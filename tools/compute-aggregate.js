@@ -1,14 +1,13 @@
 export function computeAggregate(invoice) {
-  const subtotal = invoice.lineItems.reduce(
-    (sum, item) => sum + item.quantity * item.unitPrice,
-    0,
-  );
   return {
     invoiceId: invoice.id,
-    vendor: invoice.vendor,
-    date: invoice.date,
-    currency: invoice.currency,
-    lineItemCount: invoice.lineItems.length,
-    subtotal,
+    serial: invoice.serial,
+    title: invoice.title,
+    customer: invoice.customer,
+    dateFrom: invoice.dateFrom,
+    dateTo: invoice.dateTo,
+    total: invoice.total,
+    lineCount: invoice.lineCount,
+    rows: invoice.summary ?? [],
   };
 }

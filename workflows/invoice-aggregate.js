@@ -4,34 +4,50 @@ import { getInvoice } from "../tools/get-invoice.js";
 import { computeAggregate } from "../tools/compute-aggregate.js";
 
 export const greeting =
-  "Which invoice would you like to see an aggregate on? Type an invoice number (e.g. INV-001 or just 1), or 'list' to see all.";
+  "Which invoice would you like to see an aggregate on? Type an invoice id (numeric), or 'list' to fetch the last 90 days.";
 
-export function handleTurn(input) {
+export async function handleTurn(input) {
   const intent = parseIntent(input);
 
   switch (intent.intent) {
     case "noop":
-      return { kind: "text", text: "Please enter an invoice number or 'list'." };
+      return { kind: "text", text: "Please enter an invoice id or 'list'." };
 
     case "help":
       return {
         kind: "text",
-        text: "Type an invoice number (e.g. INV-001), 'list' to see all invoices, or 'help'.",
+        text: "Type an invoice id (numeric), 'list' to fetch recent invoices, or 'help'.",
       };
 
     case "list":
-      return { kind: "list", invoices: listInvoices() };
+      try {
+        const result = await listInvoices();
+        return {
+          kind: "list",
+          from: result.from,
+          to: result.to,
+          invoices: result.invoices,
+        };
+      } catch (e) {
+        return { kind: "text", text: `Failed to load invoices: ${e.message}` };
+      }
 
-    case "aggregate": {
-      const inv = getInvoice(intent.invoiceId);
-      if (!inv) {
+    case "aggregate":
+      try {
+        const inv = await getInvoice(intent.invoiceId);
+        if (!inv) {
+          return {
+            kind: "text",
+            text: `Invoice ${intent.invoiceId} not found.`,
+          };
+        }
+        return { kind: "aggregate", aggregate: computeAggregate(inv) };
+      } catch (e) {
         return {
           kind: "text",
-          text: `Invoice ${intent.invoiceId} not found. Type 'list' to see options.`,
+          text: `Failed to load invoice ${intent.invoiceId}: ${e.message}`,
         };
       }
-      return { kind: "aggregate", aggregate: computeAggregate(inv) };
-    }
 
     case "unknown":
       return {
