@@ -4,13 +4,34 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ralsbrott</title>
-    <meta name="description" content="ralsbrott" />
+    <meta name="description" content="Invoice aggregate prompt" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main>
-      <h1>ralsbrott</h1>
-      <p>Coming soon.</p>
+    <main class="app">
+      <header>
+        <h1>ralsbrott</h1>
+        <p class="tagline">Invoice aggregate prompt</p>
+      </header>
+      <section
+        id="transcript"
+        class="transcript"
+        aria-live="polite"
+        aria-label="Conversation"
+      ></section>
+      <form id="prompt-form" class="prompt-form" autocomplete="off">
+        <input
+          id="prompt-input"
+          class="prompt-input"
+          type="text"
+          name="prompt"
+          placeholder="Type an invoice number or 'list'..."
+          aria-label="Prompt"
+          autofocus
+        />
+        <button type="submit">Send</button>
+      </form>
     </main>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
