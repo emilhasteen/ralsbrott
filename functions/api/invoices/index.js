@@ -16,7 +16,7 @@ export async function onRequestGet({ request, env }) {
   const qs = `fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}`;
   const r = await smartdokFetch(env, `/Invoices?${qs}`);
   if (!r.ok) {
-    return errorResponse(r.status, `SmartDok upstream error: ${await r.text()}`);
+    return errorResponse(r.status, `Upstream error (${r.status})`);
   }
 
   const data = await r.json();

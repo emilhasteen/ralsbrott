@@ -9,7 +9,7 @@ export async function onRequestGet({ params, env }) {
   const r = await smartdokFetch(env, `/Invoices/${id}`);
   if (r.status === 404) return errorResponse(404, `Invoice ${id} not found`);
   if (!r.ok) {
-    return errorResponse(r.status, `SmartDok upstream error: ${await r.text()}`);
+    return errorResponse(r.status, `Upstream error (${r.status})`);
   }
 
   const inv = await r.json();

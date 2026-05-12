@@ -24,7 +24,7 @@ async function exchangeToken(accessToken) {
     body: JSON.stringify({ Token: accessToken }),
   });
   if (!r.ok) {
-    throw new Error(`SmartDok auth failed: ${r.status} ${await r.text()}`);
+    throw new Error(`SmartDok auth failed: ${r.status}`);
   }
   const raw = (await r.text()).trim();
   return raw.replace(/^"|"$/g, "");
