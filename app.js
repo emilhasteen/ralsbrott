@@ -183,9 +183,9 @@ function renderAggregate(a) {
   appendSection(
     wrap,
     "Ej mappat",
-    ["Date", "Person", "Shift", "Hours", "Price"],
+    ["Date", "Person", "Item", "Hours", "Price"],
     a.ejMappat,
-    (r) => [r.date, r.person ?? "—", r.modifier, fmtNumber(r.hours), fmtNumber(r.price)],
+    (r) => [r.date, r.person ?? "—", r.label, fmtNumber(r.hours), fmtNumber(r.price)],
   );
 
   const machineTotalRows = MODIFIERS.map((m) => ({

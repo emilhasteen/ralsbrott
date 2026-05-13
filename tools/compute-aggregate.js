@@ -109,7 +109,7 @@ export function computeAggregate(invoice) {
           ejMappat.push({
             person: b.person,
             date: b.date,
-            modifier: mod,
+            label: `Addition: ${mod}`,
             hours: b.addHours[mod],
             price: b.addPrice[mod],
           });
@@ -120,9 +120,44 @@ export function computeAggregate(invoice) {
 
     if (!hasWh && !hasMachine) continue;
 
-    // dag = baseline hours minus the sum of modifier hours. Baseline is workhour hours when available
-    // (the anchor of the shift); otherwise fall back to total addition hours.
     const baselineHours = hasWh ? b.whHours : additionHoursTotal;
+
+    // Overlap: a single hour is tagged with more than one modifier (e.g. a Sunday evening hour
+    // counted as both kväll and helg). A clean proportional split would silently invent fractional
+    // hours, so dump the whole bucket — machines, workhour, additions — into Ej mappat instead.
+    if (additionHoursTotal > baselineHours) {
+      for (const [name, { hours, price }] of b.machines) {
+        ejMappat.push({
+          person: b.person,
+          date: b.date,
+          label: `Machine: ${name}`,
+          hours,
+          price,
+        });
+      }
+      if (hasWh) {
+        ejMappat.push({
+          person: b.person,
+          date: b.date,
+          label: "Workhour",
+          hours: b.whHours,
+          price: b.whPrice,
+        });
+      }
+      for (const mod of MODIFIERS) {
+        if (b.addHours[mod] > 0) {
+          ejMappat.push({
+            person: b.person,
+            date: b.date,
+            label: `Addition: ${mod}`,
+            hours: b.addHours[mod],
+            price: b.addPrice[mod],
+          });
+        }
+      }
+      continue;
+    }
+
     const modHours = {
       dag: 0,
       kväll: b.addHours.kväll,
@@ -130,11 +165,9 @@ export function computeAggregate(invoice) {
       helg: b.addHours.helg,
       storhelg: b.addHours.storhelg,
     };
-    const additionsSum =
-      modHours.kväll + modHours.natt + modHours.helg + modHours.storhelg;
-    modHours.dag = Math.max(0, baselineHours - additionsSum);
+    modHours.dag = Math.max(0, baselineHours - additionHoursTotal);
 
-    const totalHours = modHours.dag + additionsSum;
+    const totalHours = modHours.dag + additionHoursTotal;
     if (totalHours <= 0) continue;
 
     for (const mod of MODIFIERS) {
@@ -188,7 +221,7 @@ export function computeAggregate(invoice) {
     (a, b) =>
       a.date.localeCompare(b.date) ||
       (a.person || "").localeCompare(b.person || "") ||
-      MODIFIER_ORDER[a.modifier] - MODIFIER_ORDER[b.modifier],
+      (a.label || "").localeCompare(b.label || ""),
   );
 
   const machineHoursByModifier = emptyModifierMap();
