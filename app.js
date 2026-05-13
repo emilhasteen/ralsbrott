@@ -85,13 +85,17 @@ function renderAggregate(a) {
 
   const dl = document.createElement("dl");
   dl.className = "aggregate-fields";
-  const rows = [
+  const fields = [
     ["Customer", a.customer ?? "—"],
     ["Period", `${a.dateFrom ?? ""} → ${a.dateTo ?? ""}`],
     ["Line items", String(a.lineCount)],
-    ["Total", fmtNumber(a.total)],
+    ["Invoice total", fmtNumber(a.total)],
+    [
+      "Machine + additions",
+      `${fmtNumber(a.grandTotal)}  (machine ${fmtNumber(a.grandMachine)} + add. ${fmtNumber(a.grandAddition)})`,
+    ],
   ];
-  for (const [label, value] of rows) {
+  for (const [label, value] of fields) {
     const dt = document.createElement("dt");
     dt.textContent = label;
     const dd = document.createElement("dd");
@@ -103,7 +107,7 @@ function renderAggregate(a) {
   if (a.rows.length) {
     const heading = document.createElement("div");
     heading.className = "aggregate-subheading";
-    heading.textContent = "By line type";
+    heading.textContent = "By date and shift";
     wrap.appendChild(heading);
 
     const table = document.createElement("table");
@@ -111,7 +115,7 @@ function renderAggregate(a) {
 
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    for (const h of ["Type", "Name", "Qty", "Unit", "Price"]) {
+    for (const h of ["Date", "Row", "Machine", "Addition", "Total"]) {
       const th = document.createElement("th");
       th.textContent = h;
       headRow.appendChild(th);
@@ -123,11 +127,11 @@ function renderAggregate(a) {
     for (const row of a.rows) {
       const tr = document.createElement("tr");
       const cells = [
-        row.lineType ?? "",
-        row.name ?? "",
-        fmtNumber(row.quantity),
-        row.unitType ?? "",
-        fmtNumber(row.price),
+        row.date,
+        row.label,
+        fmtNumber(row.machine),
+        fmtNumber(row.addition),
+        fmtNumber(row.total),
       ];
       for (const c of cells) {
         const td = document.createElement("td");

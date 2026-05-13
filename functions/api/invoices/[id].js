@@ -22,13 +22,16 @@ export async function onRequestGet({ params, env }) {
     dateTo: (inv.DateTo ?? "").slice(0, 10),
     total: inv.TotalPrice,
     lineCount: (inv.InvoiceLines ?? []).length,
-    summary: (inv.InvoiceSummary ?? []).map((s) => ({
-      name: s.Name,
-      lineType: s.InvoiceLineType,
-      quantity: s.Quantity,
-      price: s.Price,
-      unitType: s.UnitType,
-      code: s.Code,
+    lines: (inv.InvoiceLines ?? []).map((l) => ({
+      lineType: l.InvoiceLineType,
+      lineTypeId: l.InvoiceLineTypeId,
+      detail: l.Detail,
+      code: l.Code,
+      lineText: l.LineText,
+      quantity: l.Quantity,
+      price: l.Price,
+      sum: l.Sum,
+      unitType: l.UnitType,
     })),
   });
 }
