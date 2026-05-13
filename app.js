@@ -72,6 +72,49 @@ function renderList(response) {
   return wrap;
 }
 
+const MODIFIERS = ["dag", "kväll", "natt", "helg", "storhelg"];
+
+function appendSection(parent, heading, columns, rows, rowFn, emptyText = "(none)") {
+  const h = document.createElement("div");
+  h.className = "aggregate-subheading";
+  h.textContent = heading;
+  parent.appendChild(h);
+
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "section-empty";
+    empty.textContent = emptyText;
+    parent.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "aggregate-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const c of columns) {
+    const th = document.createElement("th");
+    th.textContent = c;
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const cell of rowFn(row)) {
+      const td = document.createElement("td");
+      td.textContent = String(cell);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  parent.appendChild(table);
+}
+
 function renderAggregate(a) {
   const wrap = document.createElement("div");
 
@@ -90,10 +133,6 @@ function renderAggregate(a) {
     ["Period", `${a.dateFrom ?? ""} → ${a.dateTo ?? ""}`],
     ["Line items", String(a.lineCount)],
     ["Invoice total", fmtNumber(a.total)],
-    [
-      "Machine + additions",
-      `${fmtNumber(a.grandTotal)}  (machine ${fmtNumber(a.grandMachine)} + add. ${fmtNumber(a.grandAddition)})`,
-    ],
   ];
   for (const [label, value] of fields) {
     const dt = document.createElement("dt");
@@ -104,45 +143,99 @@ function renderAggregate(a) {
   }
   wrap.appendChild(dl);
 
-  if (a.rows.length) {
-    const heading = document.createElement("div");
-    heading.className = "aggregate-subheading";
-    heading.textContent = "By date and shift";
-    wrap.appendChild(heading);
+  appendSection(
+    wrap,
+    "Machines",
+    ["Machine", "Person", "Shift", "Hours", "Price"],
+    a.machineRows,
+    (r) => [
+      r.machine,
+      r.person ?? "—",
+      r.modifier,
+      fmtNumber(r.hours),
+      fmtNumber(r.price),
+    ],
+  );
 
-    const table = document.createElement("table");
-    table.className = "aggregate-table";
+  appendSection(
+    wrap,
+    "Mantimmar",
+    ["Person", "Shift", "Hours", "Workhour", "Addition", "Total"],
+    a.mantimmarRows,
+    (r) => [
+      r.person ?? "—",
+      r.modifier,
+      fmtNumber(r.hours),
+      fmtNumber(r.workhourPrice),
+      fmtNumber(r.additionPrice),
+      fmtNumber(r.workhourPrice + r.additionPrice),
+    ],
+  );
 
-    const thead = document.createElement("thead");
-    const headRow = document.createElement("tr");
-    for (const h of ["Date", "Row", "Machine", "Addition", "Total"]) {
-      const th = document.createElement("th");
-      th.textContent = h;
-      headRow.appendChild(th);
-    }
-    thead.appendChild(headRow);
-    table.appendChild(thead);
+  appendSection(
+    wrap,
+    "Others",
+    ["Description", "Qty", "Unit", "Price"],
+    a.others,
+    (r) => [r.label, fmtNumber(r.quantity), r.unitType ?? "", fmtNumber(r.price)],
+  );
 
-    const tbody = document.createElement("tbody");
-    for (const row of a.rows) {
-      const tr = document.createElement("tr");
-      const cells = [
-        row.date,
-        row.label,
-        fmtNumber(row.machine),
-        fmtNumber(row.addition),
-        fmtNumber(row.total),
-      ];
-      for (const c of cells) {
-        const td = document.createElement("td");
-        td.textContent = String(c);
-        tr.appendChild(td);
-      }
-      tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    wrap.appendChild(table);
+  appendSection(
+    wrap,
+    "Ej mappat",
+    ["Date", "Person", "Shift", "Hours", "Price"],
+    a.ejMappat,
+    (r) => [r.date, r.person ?? "—", r.modifier, fmtNumber(r.hours), fmtNumber(r.price)],
+  );
+
+  const machineTotalRows = MODIFIERS.map((m) => ({
+    modifier: m,
+    hours: a.machineHoursByModifier[m] || 0,
+    price: a.machinePriceByModifier[m] || 0,
+  })).filter((r) => r.hours > 0 || r.price > 0);
+  appendSection(
+    wrap,
+    "Total machines per shift",
+    ["Shift", "Hours", "Price"],
+    machineTotalRows,
+    (r) => [r.modifier, fmtNumber(r.hours), fmtNumber(r.price)],
+  );
+
+  const mantimmarTotalRows = MODIFIERS.map((m) => ({
+    modifier: m,
+    hours: a.mantimmarHoursByModifier[m] || 0,
+    price: a.mantimmarPriceByModifier[m] || 0,
+  })).filter((r) => r.hours > 0 || r.price > 0);
+  appendSection(
+    wrap,
+    "Total Mantimmar per shift",
+    ["Shift", "Hours", "Price"],
+    mantimmarTotalRows,
+    (r) => [r.modifier, fmtNumber(r.hours), fmtNumber(r.price)],
+  );
+
+  const s = a.grandSummary;
+  const summaryRows = [
+    { label: "Machines", hours: s.machineHours, price: s.machinePrice },
+    { label: "Mantimmar", hours: s.mantimmarHours, price: s.mantimmarPrice },
+    { label: "Others", hours: s.othersQty, price: s.othersPrice },
+  ];
+  if (s.ejMappatHours > 0 || s.ejMappatPrice > 0) {
+    summaryRows.push({
+      label: "Ej mappat",
+      hours: s.ejMappatHours,
+      price: s.ejMappatPrice,
+    });
   }
+  summaryRows.push({ label: "Grand total", hours: null, price: s.grandPrice });
+
+  appendSection(
+    wrap,
+    "Summary",
+    ["", "Hours", "Price"],
+    summaryRows,
+    (r) => [r.label, r.hours == null ? "" : fmtNumber(r.hours), fmtNumber(r.price)],
+  );
 
   return wrap;
 }

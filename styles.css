@@ -183,6 +183,17 @@ header h1 {
   letter-spacing: 0.05em;
 }
 
+.aggregate-table + .aggregate-subheading {
+  margin-top: 1rem;
+}
+
+.section-empty {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
 .prompt-form {
   display: flex;
   gap: 0.5rem;

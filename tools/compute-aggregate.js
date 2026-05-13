@@ -1,3 +1,6 @@
+export const MODIFIERS = ["dag", "kväll", "natt", "helg", "storhelg"];
+const MODIFIER_ORDER = { dag: 0, kväll: 1, natt: 2, helg: 3, storhelg: 4 };
+
 function parseDate(lineText) {
   if (!lineText) return null;
   const m = lineText.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
@@ -5,15 +8,18 @@ function parseDate(lineText) {
   return `${m[3]}-${m[2]}-${m[1]}`;
 }
 
-// For MachineHours and UnitAddition lines only — workhour LineText has a different layout.
-function parsePerson(lineText) {
+function parsePerson(lineText, lineType) {
   if (!lineText) return null;
+  if (lineType === "Workhour") {
+    // Workhour comments may contain commas (e.g. "km 262,263"), so anchor on the trailing HH:MM range.
+    const m = lineText.match(/,\s*([^,]+?)\s*,\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*$/);
+    return m ? m[1].trim() : null;
+  }
   const parts = lineText.split(",").map((s) => s.trim());
   return parts[2] || null;
 }
 
-// Order matters: check storhelg before helg.
-function modifierFor(detail) {
+function modifierFromDetail(detail) {
   if (!detail) return null;
   const d = detail.toLowerCase();
   if (d.includes("storhelg")) return "storhelg";
@@ -23,90 +29,202 @@ function modifierFor(detail) {
   return null;
 }
 
-const MODIFIER_ORDER = { null: 0, kväll: 1, natt: 2, helg: 3, storhelg: 4 };
+function emptyModifierMap() {
+  return { dag: 0, kväll: 0, natt: 0, helg: 0, storhelg: 0 };
+}
 
 export function computeAggregate(invoice) {
   const lines = invoice.lines ?? [];
 
-  // Bucket by (person, date)
-  const byPersonDate = new Map();
+  const buckets = new Map();
   function bucket(person, date) {
     const key = `${person ?? ""}__${date}`;
-    let b = byPersonDate.get(key);
+    let b = buckets.get(key);
     if (!b) {
-      b = { person, date, machineSum: 0, additions: new Map() };
-      byPersonDate.set(key, b);
+      b = {
+        person,
+        date,
+        whHours: 0,
+        whPrice: 0,
+        addHours: emptyModifierMap(),
+        addPrice: emptyModifierMap(),
+        machines: new Map(),
+      };
+      buckets.set(key, b);
     }
     return b;
   }
+
+  const others = [];
 
   for (const line of lines) {
-    const date = parseDate(line.lineText);
-    if (!date) continue;
-    const person = parsePerson(line.lineText);
-
-    if (line.lineType === "MachineHours") {
-      bucket(person, date).machineSum += line.sum || 0;
-    } else if (line.lineType === "UnitAddition") {
-      const mod = modifierFor(line.detail);
-      if (!mod) continue;
-      const b = bucket(person, date);
-      const cur = b.additions.get(mod) || { hours: 0, sum: 0 };
-      cur.hours += line.quantity || 0;
-      cur.sum += line.sum || 0;
-      b.additions.set(mod, cur);
-    }
-  }
-
-  // For each (person, date), split machine cost across modifiers in proportion to addition hours.
-  // No additions → all machine goes to bare "Maskin".
-  const byDateModifier = new Map();
-  function dmBucket(date, modifier) {
-    const key = `${date}__${modifier ?? ""}`;
-    let b = byDateModifier.get(key);
-    if (!b) {
-      b = { date, modifier, machine: 0, addition: 0 };
-      byDateModifier.set(key, b);
-    }
-    return b;
-  }
-
-  for (const { date, machineSum, additions } of byPersonDate.values()) {
-    if (additions.size === 0) {
-      dmBucket(date, null).machine += machineSum;
+    if (line.lineType === "CustomLine") {
+      others.push({
+        label: line.lineText || line.detail || "(custom)",
+        quantity: line.quantity || 0,
+        unitType: line.unitType,
+        price: line.sum || 0,
+      });
       continue;
     }
-    const totalAdditionHours = [...additions.values()].reduce(
-      (s, v) => s + v.hours,
-      0,
-    );
-    for (const [mod, { hours, sum }] of additions) {
-      const target = dmBucket(date, mod);
-      target.addition += sum;
-      if (totalAdditionHours > 0) {
-        target.machine += machineSum * (hours / totalAdditionHours);
-      }
+
+    const date = parseDate(line.lineText);
+    if (!date) continue;
+    const person = parsePerson(line.lineText, line.lineType);
+
+    if (line.lineType === "Workhour") {
+      const b = bucket(person, date);
+      b.whHours += line.quantity || 0;
+      b.whPrice += line.sum || 0;
+    } else if (line.lineType === "MachineHours") {
+      const b = bucket(person, date);
+      const name = line.detail || "(unknown machine)";
+      const m = b.machines.get(name) || { hours: 0, price: 0 };
+      m.hours += line.quantity || 0;
+      m.price += line.sum || 0;
+      b.machines.set(name, m);
+    } else if (line.lineType === "UnitAddition") {
+      const mod = modifierFromDetail(line.detail);
+      if (!mod) continue;
+      const b = bucket(person, date);
+      b.addHours[mod] += line.quantity || 0;
+      b.addPrice[mod] += line.sum || 0;
     }
   }
 
-  const rows = [...byDateModifier.values()].map((r) => ({
-    date: r.date,
-    modifier: r.modifier,
-    label: r.modifier ? `Maskin ${r.modifier}` : "Maskin",
-    machine: r.machine,
-    addition: r.addition,
-    total: r.machine + r.addition,
-  }));
+  const machineRows = new Map();
+  const mantimmarRows = new Map();
+  const ejMappat = [];
 
-  rows.sort(
+  for (const b of buckets.values()) {
+    const additionHoursTotal =
+      b.addHours.kväll + b.addHours.natt + b.addHours.helg + b.addHours.storhelg;
+    const hasWh = b.whHours > 0;
+    const hasMachine = b.machines.size > 0;
+    const hasAdd = additionHoursTotal > 0;
+
+    if (hasAdd && !hasWh && !hasMachine) {
+      for (const mod of MODIFIERS) {
+        if (b.addHours[mod] > 0) {
+          ejMappat.push({
+            person: b.person,
+            date: b.date,
+            modifier: mod,
+            hours: b.addHours[mod],
+            price: b.addPrice[mod],
+          });
+        }
+      }
+      continue;
+    }
+
+    if (!hasWh && !hasMachine) continue;
+
+    // dag = baseline hours minus the sum of modifier hours. Baseline is workhour hours when available
+    // (the anchor of the shift); otherwise fall back to total addition hours.
+    const baselineHours = hasWh ? b.whHours : additionHoursTotal;
+    const modHours = {
+      dag: 0,
+      kväll: b.addHours.kväll,
+      natt: b.addHours.natt,
+      helg: b.addHours.helg,
+      storhelg: b.addHours.storhelg,
+    };
+    const additionsSum =
+      modHours.kväll + modHours.natt + modHours.helg + modHours.storhelg;
+    modHours.dag = Math.max(0, baselineHours - additionsSum);
+
+    const totalHours = modHours.dag + additionsSum;
+    if (totalHours <= 0) continue;
+
+    for (const mod of MODIFIERS) {
+      const h = modHours[mod];
+      if (h <= 0) continue;
+      const fraction = h / totalHours;
+
+      for (const [name, { hours, price }] of b.machines) {
+        const mkey = `${name}__${b.person ?? ""}__${mod}`;
+        const r = machineRows.get(mkey) || {
+          machine: name,
+          person: b.person,
+          modifier: mod,
+          hours: 0,
+          price: 0,
+        };
+        r.hours += hours * fraction;
+        r.price += price * fraction;
+        machineRows.set(mkey, r);
+      }
+
+      const pkey = `${b.person ?? ""}__${mod}`;
+      const mr = mantimmarRows.get(pkey) || {
+        person: b.person,
+        modifier: mod,
+        hours: 0,
+        workhourPrice: 0,
+        additionPrice: 0,
+      };
+      mr.hours += h;
+      if (hasWh) mr.workhourPrice += b.whPrice * fraction;
+      if (mod !== "dag") mr.additionPrice += b.addPrice[mod];
+      mantimmarRows.set(pkey, mr);
+    }
+  }
+
+  const sortedMachineRows = [...machineRows.values()].sort(
     (a, b) =>
-      a.date.localeCompare(b.date) ||
-      (MODIFIER_ORDER[a.modifier ?? "null"] ?? 99) -
-        (MODIFIER_ORDER[b.modifier ?? "null"] ?? 99),
+      (a.machine || "").localeCompare(b.machine || "") ||
+      (a.person || "").localeCompare(b.person || "") ||
+      MODIFIER_ORDER[a.modifier] - MODIFIER_ORDER[b.modifier],
   );
 
-  const grandMachine = rows.reduce((s, r) => s + r.machine, 0);
-  const grandAddition = rows.reduce((s, r) => s + r.addition, 0);
+  const sortedMantimmarRows = [...mantimmarRows.values()].sort(
+    (a, b) =>
+      (a.person || "").localeCompare(b.person || "") ||
+      MODIFIER_ORDER[a.modifier] - MODIFIER_ORDER[b.modifier],
+  );
+
+  ejMappat.sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      (a.person || "").localeCompare(b.person || "") ||
+      MODIFIER_ORDER[a.modifier] - MODIFIER_ORDER[b.modifier],
+  );
+
+  const machineHoursByModifier = emptyModifierMap();
+  const machinePriceByModifier = emptyModifierMap();
+  for (const r of sortedMachineRows) {
+    machineHoursByModifier[r.modifier] += r.hours;
+    machinePriceByModifier[r.modifier] += r.price;
+  }
+
+  const mantimmarHoursByModifier = emptyModifierMap();
+  const mantimmarPriceByModifier = emptyModifierMap();
+  for (const r of sortedMantimmarRows) {
+    mantimmarHoursByModifier[r.modifier] += r.hours;
+    mantimmarPriceByModifier[r.modifier] += r.workhourPrice + r.additionPrice;
+  }
+
+  const totalMachineHours = MODIFIERS.reduce(
+    (s, m) => s + machineHoursByModifier[m],
+    0,
+  );
+  const totalMachinePrice = MODIFIERS.reduce(
+    (s, m) => s + machinePriceByModifier[m],
+    0,
+  );
+  const totalMantimmarHours = MODIFIERS.reduce(
+    (s, m) => s + mantimmarHoursByModifier[m],
+    0,
+  );
+  const totalMantimmarPrice = MODIFIERS.reduce(
+    (s, m) => s + mantimmarPriceByModifier[m],
+    0,
+  );
+  const totalOthersQty = others.reduce((s, o) => s + o.quantity, 0);
+  const totalOthersPrice = others.reduce((s, o) => s + o.price, 0);
+  const totalEjMappatHours = ejMappat.reduce((s, e) => s + e.hours, 0);
+  const totalEjMappatPrice = ejMappat.reduce((s, e) => s + e.price, 0);
 
   return {
     invoiceId: invoice.id,
@@ -117,9 +235,28 @@ export function computeAggregate(invoice) {
     dateTo: invoice.dateTo,
     total: invoice.total,
     lineCount: invoice.lineCount,
-    grandMachine,
-    grandAddition,
-    grandTotal: grandMachine + grandAddition,
-    rows,
+    machineRows: sortedMachineRows,
+    mantimmarRows: sortedMantimmarRows,
+    others,
+    ejMappat,
+    machineHoursByModifier,
+    machinePriceByModifier,
+    mantimmarHoursByModifier,
+    mantimmarPriceByModifier,
+    grandSummary: {
+      machineHours: totalMachineHours,
+      machinePrice: totalMachinePrice,
+      mantimmarHours: totalMantimmarHours,
+      mantimmarPrice: totalMantimmarPrice,
+      othersQty: totalOthersQty,
+      othersPrice: totalOthersPrice,
+      ejMappatHours: totalEjMappatHours,
+      ejMappatPrice: totalEjMappatPrice,
+      grandPrice:
+        totalMachinePrice +
+        totalMantimmarPrice +
+        totalOthersPrice +
+        totalEjMappatPrice,
+    },
   };
 }
